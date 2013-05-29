@@ -18,13 +18,16 @@ import java.util.Vector;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.mongodb.BasicDBObject;
-import com.mongodb.DBAddress;
+import com.mongodb.ServerAddress;
 import com.mongodb.DBCollection;
 import com.mongodb.DBCursor;
 import com.mongodb.DBObject;
-import com.mongodb.Mongo;
-import com.mongodb.MongoOptions;
+
+import com.mongodb.MongoClient; //used with latest driver
+import com.mongodb.MongoClientOptions; //used with latest driver
+
 import com.mongodb.WriteConcern;
+import com.mongodb.ReadPreference;
 import com.mongodb.WriteResult;
 import com.yahoo.ycsb.ByteArrayByteIterator;
 import com.yahoo.ycsb.ByteIterator;
@@ -33,12 +36,12 @@ import com.yahoo.ycsb.DBException;
 
 /**
  * MongoDB client for YCSB framework.
- * 
+ *
  * Properties to set:
- * 
- * mongodb.url=mongodb://localhost:27017 mongodb.database=ycsb
+ *
+ * mongodb.url=localhost mongodb.database=ycsb
  * mongodb.writeConcern=normal
- * 
+ * mongodb.readPreference=secondary
  * @author ypai
  */
 public class MongoDbClient extends DB {
@@ -47,7 +50,8 @@ public class MongoDbClient extends DB {
     protected static final Integer INCLUDE = Integer.valueOf(1);
 
     /** A singleton Mongo instance. */
-    private static Mongo mongo;
+    //private static Mongo mongo;
+    private static MongoClient mongo;
 
     /** The default write concern for the test. */
     private static WriteConcern writeConcern;
@@ -55,6 +59,16 @@ public class MongoDbClient extends DB {
     /** The database to access. */
     private static String database;
 
+    /** read preference */
+    private static ReadPreference readPreference;
+
+    /** added username and password */
+    /** The database to access username. */
+    private static String username;
+    
+    /** The database to access password. */
+    private static String userpass;
+    
     /** Count the number of times initialized to teardown on the last {@link #cleanup()}. */
     private static final AtomicInteger initCount = new AtomicInteger(0);
 
@@ -72,14 +86,21 @@ public class MongoDbClient extends DB {
 
             // initialize MongoDb driver
             Properties props = getProperties();
-            String url = props.getProperty("mongodb.url",
-                    "mongodb://localhost:27017");
-            database = props.getProperty("mongodb.database", "ycsb");
-            String writeConcernType = props.getProperty("mongodb.writeConcern",
-                    "safe").toLowerCase();
-            final String maxConnections = props.getProperty(
-                    "mongodb.maxconnections", "10");
 
+            String url = props.getProperty("mongodb.url", "localhost");
+
+            database = props.getProperty("mongodb.database", "ycsb");
+
+            String writeConcernType = props.getProperty("mongodb.writeConcern", "safe").toLowerCase();
+
+            String readPreferenceType = props.getProperty("mongodb.readPreference", "secondary").toLowerCase();
+
+            final String maxConnections = props.getProperty("mongodb.maxconnections", "10");
+            
+            username = props.getProperty("mongodb.username", "ycsb");
+            userpass = props.getProperty("mongodb.userpass", "ycsb");
+
+            // write concern
             if ("none".equals(writeConcernType)) {
                 writeConcern = WriteConcern.NONE;
             }
@@ -104,20 +125,34 @@ public class MongoDbClient extends DB {
                 System.exit(1);
             }
 
-            try {
-                // strip out prefix since Java driver doesn't currently support
-                // standard connection format URL yet
-                // http://www.mongodb.org/display/DOCS/Connections
-                if (url.startsWith("mongodb://")) {
-                    url = url.substring(10);
-                }
+            // read preference
+            if ("secondary".equals(readPreferenceType)) {
+                readPreference = ReadPreference.secondaryPreferred();
+            }
+            else if ("primary".equals(readPreferenceType)) {
+                readPreference = ReadPreference.primary();
+            }
+            else {
+                System.err
+                        .println("ERROR: Invalid readPreference: '"
+                                + readPreferenceType
+                                + "'. "
+                                + "Must be [ secondary | primary ]");
+                System.exit(1);
+            }
 
+
+            try {
                 // need to append db to url.
-                url += "/" + database;
+                // url += "/" + database;
                 System.out.println("new database url = " + url);
-                MongoOptions options = new MongoOptions();
-                options.connectionsPerHost = Integer.parseInt(maxConnections);
-                mongo = new Mongo(new DBAddress(url), options);
+                
+                MongoClientOptions.Builder builder = new MongoClientOptions.Builder();
+                builder.writeConcern(writeConcern);
+                builder.readPreference(readPreference);
+                builder.connectionsPerHost(Integer.parseInt(maxConnections));
+                
+                mongo = new MongoClient(new ServerAddress(url)); 
 
                 System.out.println("mongo connection created with " + url);
             }
@@ -162,6 +197,7 @@ public class MongoDbClient extends DB {
         com.mongodb.DB db = null;
         try {
             db = mongo.getDB(database);
+            db.authenticate(username, userpass.toCharArray()); //authenticate to target db
             db.requestStart();
             DBCollection collection = db.getCollection(table);
             DBObject q = new BasicDBObject().append("_id", key);
@@ -194,9 +230,8 @@ public class MongoDbClient extends DB {
         com.mongodb.DB db = null;
         try {
             db = mongo.getDB(database);
-
+            db.authenticate(username, userpass.toCharArray()); //authenticate to target db
             db.requestStart();
-
             DBCollection collection = db.getCollection(table);
             DBObject r = new BasicDBObject().append("_id", key);
             for (String k : values.keySet()) {
@@ -232,9 +267,8 @@ public class MongoDbClient extends DB {
         com.mongodb.DB db = null;
         try {
             db = mongo.getDB(database);
-
+            db.authenticate(username, userpass.toCharArray()); //authenticate to target db
             db.requestStart();
-
             DBCollection collection = db.getCollection(table);
             DBObject q = new BasicDBObject().append("_id", key);
             DBObject fieldsToReturn = new BasicDBObject();
@@ -282,9 +316,8 @@ public class MongoDbClient extends DB {
         com.mongodb.DB db = null;
         try {
             db = mongo.getDB(database);
-
+            db.authenticate(username, userpass.toCharArray()); //authenticate to target db
             db.requestStart();
-
             DBCollection collection = db.getCollection(table);
             DBObject q = new BasicDBObject().append("_id", key);
             DBObject u = new BasicDBObject();
@@ -327,6 +360,7 @@ public class MongoDbClient extends DB {
         com.mongodb.DB db = null;
         try {
             db = mongo.getDB(database);
+            db.authenticate(username, userpass.toCharArray()); //authenticate to target db
             db.requestStart();
             DBCollection collection = db.getCollection(table);
             // { "_id":{"$gte":startKey, "$lte":{"appId":key+"\uFFFF"}} }
@@ -360,7 +394,7 @@ public class MongoDbClient extends DB {
 
     /**
      * TODO - Finish
-     * 
+     *
      * @param resultMap
      * @param obj
      */
